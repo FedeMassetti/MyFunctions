@@ -1,0 +1,32 @@
+
+library(NicheMapR)
+library(microclima)
+library(dplyr)
+
+#coo is a table containing coordinates (Latitude, Longitude), locality ID (LID), soiltype, soilgrids
+
+l <- split(coo, coo$LID) #Convert the table with the localities in a list divided by locality IDs
+l2 <- list() #Create a dummy list to put the weather data we are going to model with NicheMapR microclimate model, global climate database implementation
+N = length(l)
+for (i in 1:N) {
+  loc <- c(l[[i]]$Longitude, l[[i]]$Latitude)
+  soiltype <- l[[i]]$soiltype
+  soilgrids <- l[[i]]$soilgrids
+  micro <- micro_global(loc = loc, nyears = 3, soiltype = soiltype, timeinterval=365, 
+                      runshade = 0, clearsky = 0, run.gads=1, soilgrids = soilgrids, Refhyt= 0.01) #For each lat and long model the microclimates each hour for each day of the year (rerun for three years)
+  metout<-as.data.frame(micro$metout) # above ground microclimatic conditions, min shade
+  daily_metout <- stats::aggregate(. ~DOY, data=metout, mean, na.rm=TRUE) #calculate daily means
+  daily_metout$DATE <- as.Date(daily_metout$DOY, origin = "2016-01-01") #append dummy date
+  d <- as.Date(cut(as.Date(daily_metout$DATE, "%m-%d-%Y"), "month")) + 32
+  daily_metout$SEASON <- factor(quarters(d), levels = c("Q1", "Q2", "Q3", "Q4"), 
+                                labels = c("SUM", "AUT", "WIN", "SPR")) #assign season to each date (southern emisphere)
+  season_metout <- aggregate(. ~SEASON, data=daily_metout, mean, na.rm=TRUE) #calculate seasonal means
+  mn <- colMeans(season_metout[,-1], na.rm = FALSE, dims = 1)
+  dif <- season_metout[1,-1]- season_metout[3,-1] #Calculate summer-winter difference for each site
+  site <- rbind(dif, mn)
+  site$VAR <- c("s-w", "mean")
+  site <- select(site, VAR, TAREF, RH, VREF, SOLR)
+  l2[[i]] <- cbind(l[[i]], site)
+  }
+
+micromeans <- Reduce(function(...) merge(..., all=T), l2) #Trasform the list back in a dataframe
